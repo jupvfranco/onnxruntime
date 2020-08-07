@@ -235,6 +235,18 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
     if (is_profiler_enabled) {
       sync_time_begin = session_state.Profiler().StartTime();
     }
+    const std::string node_name_for_profiling = [&]() -> std::string {
+      if (!is_profiler_enabled) return {};
+      // Derive something meaningful for profile traces and logs if node name field is blank in execution graph
+      return node.Name().empty() ? MakeString(node.OpType(), "_", node_index) : node.Name();
+    }();
+
+#ifdef ENABLE_NVTX_PROFILE
+    profile::NvtxRangeCreator fence_before_range(
+        node_name_for_profiling + "_fence_before",
+        profile::Color::Grey);
+    fence_before_range.Begin();
+#endif
 
     // sync before compute
     int queue_id = p_op_kernel->KernelDef().ExecQueueId();
@@ -272,12 +284,9 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
     utils::DumpNodeInputs(op_kernel_context, p_op_kernel->Node());
 #endif
 
-    const std::string node_name_for_profiling = [&]() -> std::string {
-      if (!is_profiler_enabled) return {};
-      // Derive something meaningful for profile traces and logs if node name field is blank in execution graph
-      return node.Name().empty() ? MakeString(node.OpType(), "_", node_index) : node.Name();
-    }();
-
+#ifdef ENABLE_NVTX_PROFILE
+    fence_before_range.End();
+#endif
     if (is_profiler_enabled) {
       session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
                                                      node_name_for_profiling + "_fence_before",
@@ -293,6 +302,12 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
       CalculateTotalInputSizes(&op_kernel_context, p_op_kernel,
                                input_activation_sizes, input_parameter_sizes, node_name_for_profiling);
     }
+#ifdef ENABLE_NVTX_PROFILE
+    profile::NvtxRangeCreator kernel_range(
+        node_name_for_profiling + "_kernel",
+        profile::Color::Amber);
+    kernel_range.Begin();
+#endif
 
 #ifdef CONCURRENCY_VISUALIZER
     {
@@ -319,6 +334,9 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
     }
 #endif
 
+#ifdef ENABLE_NVTX_PROFILE
+    kernel_range.End();
+#endif
     if (is_profiler_enabled) {
       // Calculate total output sizes for this operation.
       CalculateTotalOutputSizes(&op_kernel_context, total_output_sizes, node_name_for_profiling);
@@ -352,6 +370,12 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
 
       sync_time_begin = session_state.Profiler().StartTime();
     }
+#ifdef ENABLE_NVTX_PROFILE
+    profile::NvtxRangeCreator fence_after_range(
+        node_name_for_profiling + "_fence_after",
+        profile::Color::Grey);
+    fence_after_range.Begin();
+#endif
 
     // sync after compute for outputs
     if (seq_exec_plan.NodeHasFence(node_index)) {
@@ -388,6 +412,9 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
                       "OpEnd",                    // Event Name that should uniquely identify your event.
                       TraceLoggingValue(p_op_kernel->KernelDef().OpName().c_str(), "op_name"),
                       TraceLoggingValue(elapsed.QuadPart, "time"));
+#endif
+#ifdef ENABLE_NVTX_PROFILE
+    fence_after_range.End();
 #endif
     if (is_profiler_enabled) {
       session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,

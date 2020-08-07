@@ -38,7 +38,8 @@ enum class Color : uint32_t {
   LightAmber = 0x00fff2cc,
   White = 0x00ffffff,
   Cyan = 0x0000ffff,
-  Magenta = 0x00ff00ff
+  Magenta = 0x00ff00ff,
+  Grey = 0x00888888
 };
 
 class RangeCreatorBase {
