@@ -236,7 +236,9 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
       sync_time_begin = session_state.Profiler().StartTime();
     }
     const std::string node_name_for_profiling = [&]() -> std::string {
+#ifndef ENABLE_NVTX_PROFILE
       if (!is_profiler_enabled) return {};
+#endif
       // Derive something meaningful for profile traces and logs if node name field is blank in execution graph
       return node.Name().empty() ? MakeString(node.OpType(), "_", node_index) : node.Name();
     }();
