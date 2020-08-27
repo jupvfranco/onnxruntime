@@ -209,6 +209,7 @@ Status TrainingRunner::Initialize() {
     };
 
     // Append first output of each event operator.
+    std::cout << "[training_runner.cc] Call ForEachOutputName" << std::endl;
     pipeline_context_.pipeline_tensor_names.ForEachOutputName(append_non_empty_name);
 
     // Names of allowed inputs after pipeline partition.
@@ -461,6 +462,7 @@ Status TrainingRunner::PrepareFetchNamesAndFetches(const SessionMode mode,
 
       // Append first output of each event operator to fetch_names list to make sure all event ops will
       // be computed.
+      std::cout << "[training_runner.cc] Call ForEachOutputName" << std::endl;
       pipeline_context_.pipeline_tensor_names.ForEachOutputName(append_non_empty_name);
     }
   } else if (mode == EvaluateStep) {
@@ -487,6 +489,7 @@ Status TrainingRunner::PrepareFetchNamesAndFetches(const SessionMode mode,
 
   // We need to fetch at least one variable.
   // If there is nothing to fetch, we fetch all model outputs.
+  std::cout << "[training_runner.cc] Check fetch names" << std::endl;
   if (fetch_names.empty()) {
     fetch_names = allowed_fetch_names;
   }
@@ -600,6 +603,7 @@ void TrainingRunner::RunWithUpdate(VectorString& feed_names,
     CheckWorkerException(status.execution_exception);
   }
 
+  std::cout << "[training_runner.cc] Call ResetAllEvents" std::endl;
   onnxruntime::contrib::OrtEventPool::GetInstance().ResetAllEvents();
 
   // Add one after process one batch.
