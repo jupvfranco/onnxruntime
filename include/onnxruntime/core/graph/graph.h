@@ -276,6 +276,12 @@ class Node {
   /** Gets an iterator to the end of the input nodes to this Node. */
   NodeConstIterator InputNodesEnd() const noexcept { return NodeConstIterator(relationships_.input_edges.cend()); }
 
+  /** Gets an iterator to the beginning of the input control nodes to this Node. */
+  NodeConstIterator ControlInputNodesBegin() const noexcept { return NodeConstIterator(relationships_.control_input_edges.cbegin()); };
+
+  /** Gets an iterator to the end of the input control nodes to this Node. */
+  NodeConstIterator ControlInputNodesEnd() const noexcept { return NodeConstIterator(relationships_.control_input_edges.cend()); }
+
   /** Gets an iterator to the beginning of the output nodes from this Node. */
   NodeConstIterator OutputNodesBegin() const noexcept {
     return NodeConstIterator(relationships_.output_edges.cbegin());
@@ -456,6 +462,10 @@ class Node {
 
     /** The edges for Nodes that provide inputs to this Node. */
     EdgeSet input_edges;
+
+    /** The edges for Nodes that do not provide inputs to this Node, but
+     * still must be computed before this node. */
+    EdgeSet control_input_edges;
 
     /** The edges for Nodes that receive outputs from this Node. */
     EdgeSet output_edges;

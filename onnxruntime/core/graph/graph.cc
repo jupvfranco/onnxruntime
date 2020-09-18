@@ -1577,6 +1577,10 @@ void Graph::ReverseDFSFrom(const std::vector<const Node*>& from,
         if (stop && stop(&n, &(*iter))) continue;
         sorted_nodes.push_back(&(*iter));
       }
+      for (auto iter = n.ControlInputNodesBegin(); iter != n.ControlInputNodesEnd(); ++iter) {
+        if (stop && stop(&n, &(*iter))) continue;
+        sorted_nodes.push_back(&(*iter));
+      }
       std::sort(sorted_nodes.begin(), sorted_nodes.end(), comp);
       for (const auto* in : sorted_nodes) {
         const NodeIndex idx = in->Index();
@@ -1586,6 +1590,13 @@ void Graph::ReverseDFSFrom(const std::vector<const Node*>& from,
       }
     } else {
       for (auto iter = n.InputNodesBegin(); iter != n.InputNodesEnd(); ++iter) {
+        if (stop && stop(&n, &(*iter))) continue;
+        const NodeIndex idx = (*iter).Index();
+        if (!visited[idx]) {
+          stack.emplace_back(GetNode(idx), false);
+        }
+      }
+      for (auto iter = n.ControlInputNodesBegin(); iter != n.ControlInputNodesEnd(); ++iter) {
         if (stop && stop(&n, &(*iter))) continue;
         const NodeIndex idx = (*iter).Index();
         if (!visited[idx]) {
@@ -2959,6 +2970,7 @@ bool Graph::AddControlEdge(NodeIndex src_node_index, NodeIndex dst_node_index) {
     nodes_[src_node_index]->MutableRelationships().output_edges.insert(Node::EdgeEnd(*nodes_[dst_node_index]));
     nodes_[dst_node_index]->MutableRelationships().input_edges.insert(Node::EdgeEnd(*nodes_[src_node_index]));
     nodes_[dst_node_index]->MutableRelationships().control_inputs.insert(nodes_[src_node_index]->Name());
+    nodes_[dst_node_index]->MutableRelationships().control_input_edges.insert(Node::EdgeEnd(*nodes_[src_node_index]));
   }
 
   return true;
