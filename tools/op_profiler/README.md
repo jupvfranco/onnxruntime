@@ -75,7 +75,7 @@ We can observe the following information:
 1. cuda launches;
 2. NVTX markers for the executions of forward and backward operators; 
 3. Operators; and
-4. GPU kernels running on the GPU. 
+4. CUDA kernels running on the GPU. 
 
 The first step is to get a correlation between cuda launches and kernels using [this API](https://docs.nvidia.com/cupti/Cupti/annotated.html#structCUpti__ActivityAPI_131ebcf7b922b23850c6c85a9d5157b0d). Then, for each operator, we look at all the cuda launches that happen in the same time window and we consider that the kernels that correlate with these cuda launches are caused by the operator. Finally, the set of operators that belong to a forward/backward phase are those that run in the same time window. 
 
