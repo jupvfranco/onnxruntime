@@ -1,7 +1,7 @@
 
 [Work in Progress]
 
-This is a utility tool to gather profiling information of individual operations, by correlating each operator with the GPU kernels it executes.
+This utility tool gathers profiling information of individual operations, by correlating each operator with the GPU kernels it executes.
 
 When running the sequential executor, it will emit NVTX annotations for each operator it executes ([PR5542](https://github.com/microsoft/onnxruntime/pull/5542)). For that we need to build onnxruntime with the option `--enable_nvtx_profile` and to prepend `nvprof -o profile.prof --` to the command used to train/run a model, or `nvprof --profile-child-processes -o profile%p.prof` when using multiple processes. This will generate one, or more, .prof files, which are essentially SQL data bases filled with CUPTI profiling information. The tool [gather_op_profile](.gather_op_profile.py) queries these databases to collect GPU kernel information about each operator. 
 
@@ -11,7 +11,7 @@ At the moment, we gather for each operator a list of all the kernels it executes
 * number of registers per thread, and
 * stream id.
 
-However, these are just examples. The .prof files contains much more information: https://docs.nvidia.com/cupti/Cupti/annotated.html#structCUpti__Activity.
+However, these are just examples. The .prof files contain much more information: https://docs.nvidia.com/cupti/Cupti/annotated.html#structCUpti__Activity.
 
 ## Example: 
 
