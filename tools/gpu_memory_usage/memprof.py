@@ -5,10 +5,13 @@ import argparse
 
 from subprocess import Popen
 
+
 def parse_input():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-o", type=str, default=None, help="Output file")
-    parser.add_argument("-i", type=int, default=-1, help="Interval in milliseconds")
+    parser.add_argument("-o", type=str, default=None,
+                        help="Output file")
+    parser.add_argument("-i", type=int, default=-1,
+                        help="Interval in milliseconds")
     # TODO: isn't there a better way of implementing this? Needs testing.
     parser.add_argument("remainder", nargs=argparse.REMAINDER)
     return parser.parse_args()
@@ -23,7 +26,8 @@ if __name__ == '__main__':
     print("Will profile " + str(command_line))
 
     script_location = str(pathlib.Path(__file__).parent.absolute())
-    nvml_profiler = os.path.abspath(script_location + "/profile_total_memory_usage") 
+    nvml_profiler = os.path.abspath(
+        script_location + "/profile_total_memory_usage")
 
     prof_command = [nvml_profiler]
     if args.i >= 0:
@@ -42,4 +46,3 @@ if __name__ == '__main__':
     # Wait for the execution of the model to be over, and send a SIGINT
     model.wait()
     os.kill(p.pid, signal.SIGINT)
-
