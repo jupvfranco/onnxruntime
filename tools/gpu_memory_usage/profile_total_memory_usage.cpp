@@ -8,7 +8,9 @@
 
 #include <nvml.h>
 
-using namespace std;
+#include "cxxopts.hpp"
+
+using namespace std::chrono_literals;
 
 static volatile bool interrupted = false;
 
@@ -16,19 +18,46 @@ template<typename T>
 void checkNVMLResult(T error) {
   if (error) {
     nvmlShutdown();
-    throw runtime_error(nvmlErrorString(error));
+    throw std::runtime_error(nvmlErrorString(error));
   }
 }
 
-// TODO: Add multi-GPU support for manual profiling
+bool ParseArguments(int argc, char* argv[], 
+                    std::string& output_file, int& interval) {
+  cxxopts::Options options("Memory profiler.");
+  // clang-format off
+  options
+    .add_options()
+      ("o", "Where to write the profiling information.",
+       cxxopts::value<std::string>()->default_value("memory_usage.txt"))
+      ("i", "Measures GPU memory usage every <i> milliseconds",
+       cxxopts::value<int>()->default_value("1"));
+  // clang-format on
+
+  try {
+    auto flags = options.parse(argc, argv);
+    output_file = flags["o"].as<std::string>();
+    interval = flags["i"].as<int>();
+    return true;
+  } catch (const std::exception& e) {
+    const std::string msg = "Failed to parse the command line arguments.";
+    std::cerr << msg << ": " << e.what() << "\n"
+              << options.help() << "\n";
+    return false;
+  }
+}
+
 int main(int argc, char *argv[])
 {
-  bool use_nvtx = true; 
   std::string output_file;
-  if (argc > 1) {
-      use_nvtx = false;
-      output_file = argv[1];
+  int interval;
+  if (!ParseArguments(argc, argv, output_file, interval)) {
+    return EXIT_FAILURE;
   }
+
+  std::cout << "Measuring memory information from all GPUs in the device every "
+            << interval << " milliseconds.\n"
+            << "Results written in " << output_file << "\n";
 
   checkNVMLResult(nvmlInit());
 
@@ -42,7 +71,7 @@ int main(int argc, char *argv[])
 
   signal(SIGINT, [](int) { interrupted = true; });
   
-  std::ofstream output("memory.txt");
+  std::ofstream output(output_file);
   auto begin = std::chrono::steady_clock::now();
 
   while (!interrupted) {
@@ -59,7 +88,7 @@ int main(int argc, char *argv[])
               << " " << memory.used  // "Allocated FB memory."
               << "\n";
     }
-    std::this_thread::sleep_for(1ms);
+    std::this_thread::sleep_for(interval * 1ms);
   }
   output.close();
   nvmlShutdown();
