@@ -42,17 +42,25 @@ def read_memory_usage_nvml(filename):
 def plot_memory_usage_nvml(device_set, entries, filename):
     n_devices = len(device_set)
     fig, axs = plt.subplots(n_devices, sharex=True)
+    all_plots = []
+    max_usage = -1
     for device in device_set:
         print("Plotting memory usage in device {}".format(device))
         ax = axs if n_devices == 1 else axs[device]
+        all_plots.append(ax)
         x = [ns_to_sec(e.timestamp) for e in entries if e.device == device]
         y = [b_to_mib(e.bytes) for e in entries if e.device == device]
+        max_usage = max(max_usage, max(y))
         ax.plot(x, y)
         ax.set_ylabel('MiB')
-    if n_devices == 1:
-        axs.set_xlabel('time (sec)')
-    else:
-        axs[-1].set_xlabel('time (sec)')
+        ax.text(0.95, 0.01, 'Peak Usage: {} MiB'.format(max(y)),
+                verticalalignment='bottom', horizontalalignment='right',
+                transform=ax.transAxes, color='green', fontsize=8)
+    
+    all_plots[-1].set_xlabel('time (sec)')
+    for ax in all_plots:
+        ax.set_ylim(0, max_usage + 0.1 * max_usage)
+
     fig.savefig(filename + ".png")
 
 
