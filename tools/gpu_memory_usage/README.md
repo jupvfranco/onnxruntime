@@ -72,20 +72,34 @@ python plot.py --memory-usage-file bert_tiny_pp2.txt --usage-output bert_tiny_pp
 ### Example 3:
 Running 1 training step of bert tiny wtih two different allocation strategies: kNextPowerOfTwo and kSameAsRequested.
 
-#### kNextPowerOfTwo
+#### kNextPowerOfTwo:
 ![](examples/kNextPowerOfTwo.png) 
 
-#### kSameAsRequested
+#### kSameAsRequested:
 ![](examples/kSameAsRequested.png)
 
 
 # Memory Allocation
 
-nvprof --profile-child-processes --track-memory-allocations on -o allocs_1device_1step%p.prof -- ~/src/onnxruntime/build/Linux/Debug/onnxruntime_training_bert --model_name ~/bert/bert-tiny-uncased_L_3_H_128_A_2_V_30528_S_512_Dp_0.1_optimized_layer_norm_opset12  --train_data_dir ~/bert/bert_data/512/books_wiki_en_corpus/train --test_data_dir ~/bert/bert_data/512/books_wiki_en_corpus/test --train_batch_size 1 --mode train --display_loss_steps 1 --optimizer lamb --learning_rate 0.006 --gradient_accumulation_steps 1 --num_train_steps 1 --warmup_ratio 0 --warmup_mode Linear --use_nccl
+A different option to profile memory usage is using `nvprof --track-memory-allocations on`. This seems to add some overhead to the execution time though.
 
+In order to profile Example #2 above (bert tiny with pipeline parallelism of 2), we can run: 
+```
+nvprof --profile-child-processes --track-memory-allocations on -o allocs_2devices_1step%p.prof -- mpirun -n 2 <path/to/onnxruntime_training_bert> --model_name <path/to/bert-tiny/onnx/file>  --train_data_dir <path/to/train/data/dir> --test_data_dir <path/to/test/data/dir> --train_batch_size 1 --mode train --display_loss_steps 1 --optimizer lamb --learning_rate 0.006 --gradient_accumulation_steps 1 --num_train_steps 1 --warmup_ratio 0 --warmup_mode Linear --use_nccl --pipeline_parallel_size 2 --cut_group_info 418
+```
 
+This will generate two files named `allocs_2devices_1step*.prof`: one for each 
+process.
 
-nvprof --profile-child-processes --track-memory-allocations on -o allocs_2devices_1step%p.prof -- mpirun -n 2 ~/src/onnxruntime/build/Linux/Debug/onnxruntime_training_bert --model_name ~/bert/bert-tiny-uncased_L_3_H_128_A_2_V_30528_S_512_Dp_0.1_optimized_layer_norm_opset12  --train_data_dir ~/bert/bert_data/512/books_wiki_en_corpus/train --test_data_dir ~/bert/bert_data/512/books_wiki_en_corpus/test --train_batch_size 1 --mode train --display_loss_steps 1 --optimizer lamb --learning_rate 0.006 --gradient_accumulation_steps 1 --num_train_steps 1 --warmup_ratio 0 --warmup_mode Linear --use_nccl --pipeline_parallel_size 2 --cut_group_info 418
+Note: in one of the profiling files, it seems that one of the processes 
+allocates in both GPUs. Is this the 2 MiB we see in the memory usage plots? 
+TODO: investigate this.
 
+In order to plot the resulting profiling information, we can use the same plotting script from above:
+```
+python plot.py --memory-allocation-files allocs_2devices_1step5110.prof allocs_2devices_1step5111.prof --allocation-output allocs_2devices_1step
+```
 
-Seems to add overhead.
+#### Result
+![](examples/allocs_2devices_1step.png)
+ 
