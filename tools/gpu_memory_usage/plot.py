@@ -133,7 +133,7 @@ def plot_allocated_memory(allocations, end, devices, filename):
     # All the subplots share the x axis. Add label to last one only.
     all_plots[-1].set_xlabel('time (millisec)')
     for ax in all_plots:
-        ax.set_ylim(0, max_stacked)
+        ax.set_ylim(0, max_stacked + 0.1 * max_stacked)
     fig.savefig(filename + ".png")
 
 
