@@ -53,6 +53,7 @@ def plot_memory_usage_nvml(device_set, entries, filename):
         max_usage = max(max_usage, max(y))
         ax.plot(x, y)
         ax.set_ylabel('MiB')
+        ax.set_title('Memory usage in GPU {}'.format(device))
         ax.text(0.95, 0.01, 'Peak Usage: {} MiB'.format(max(y)),
                 verticalalignment='bottom', horizontalalignment='right',
                 transform=ax.transAxes, color='green', fontsize=8)
@@ -130,6 +131,7 @@ def plot_allocated_memory(allocations, end, devices, filename):
         max_stacked = max(max_stacked, max(sum(stacked)))
         ax.stackplot(list(range(end)), stacked)
         ax.set_ylabel('MiB')
+        ax.set_title('Allocated memory in GPU {}'.format(device))
     # All the subplots share the x axis. Add label to last one only.
     all_plots[-1].set_xlabel('time (millisec)')
     for ax in all_plots:
@@ -145,7 +147,7 @@ def read_user_options():
                         help='List of .prof files.')
     parser.add_argument('--allocation-output',
                         type=str,
-                        default="allocated_memory.png",
+                        default="allocated_memory",
                         help="File to save plot with allocated memory info.")
     parser.add_argument('--memory-usage-file',
                         type=str,
@@ -153,7 +155,7 @@ def read_user_options():
                         help='.txt file with memory usage info.')
     parser.add_argument('--usage-output',
                         type=str,
-                        default="memory_usage.png",
+                        default="memory_usage",
                         help="File to save plot with memory usage info.")
 
     args = parser.parse_args()
