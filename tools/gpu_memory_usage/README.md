@@ -95,7 +95,8 @@ Note: in one of the profiling files, it seems that one of the processes
 allocates in both GPUs. Is this the 2 MiB we see in the memory usage plots? 
 TODO: investigate this.
 
-In order to plot the resulting profiling information, we can use the same plotting script from above:
+In order to plot the resulting profiling information, we can use the same 
+plotting script from above:
 ```
 python plot.py --memory-allocation-files allocs_2devices_1step5110.prof allocs_2devices_1step5111.prof --allocation-output allocs_2devices_1step
 ```
@@ -103,3 +104,7 @@ python plot.py --memory-allocation-files allocs_2devices_1step5110.prof allocs_2
 #### Result
 ![](examples/allocs_2devices_1step.png)
  
+
+Each color shows a memory allocation. The x-axis shows in milliseconds, when the
+allocation and the respective free happened. The y-axis shows in MiB the size of
+the allocation.
