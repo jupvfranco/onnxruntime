@@ -56,7 +56,7 @@ def plot_memory_usage_nvml(device_set, entries, filename):
         ax.text(0.95, 0.01, 'Peak Usage: {} MiB'.format(max(y)),
                 verticalalignment='bottom', horizontalalignment='right',
                 transform=ax.transAxes, color='green', fontsize=8)
-    
+
     all_plots[-1].set_xlabel('time (sec)')
     for ax in all_plots:
         ax.set_ylim(0, max_usage + 0.1 * max_usage)
