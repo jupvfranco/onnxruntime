@@ -77,7 +77,7 @@ We can observe the following information:
 3. Operators; and
 4. CUDA kernels running on the GPU. 
 
-The first step is to get a correlation between cuda launches (1) and kernels (4) using [this API](https://docs.nvidia.com/cupti/Cupti/annotated.html#structCUpti__ActivityAPI_131ebcf7b922b23850c6c85a9d5157b0d). Then, for each operator (3), we look at all the cuda launches (1) that happen in the same time window, i.e., all the cuda launches with a starting time greater or equal to the starting time of the operator and with an endind time smaller or equal to the ending time of the operator. We consider the kernels that correlate with these cuda launches are caused by the operator. Finally, the set of operators (3) that belong to a forward/backward phase (2) are those that run in the same time window. 
+The first step is to get a correlation between cuda launches (1) and kernels (4) using [this API](https://docs.nvidia.com/cupti/Cupti/annotated.html#structCUpti__ActivityAPI_131ebcf7b922b23850c6c85a9d5157b0d). Then, for each operator (3), we look at all the cuda launches (1) that happen in the same time window, i.e., all the cuda launches with a starting time greater or equal to the starting time of the operator and with an endind time smaller or equal to the ending time of the operator. We consider the kernels that correlate with these cuda launches are caused by the operator. Finally, the set of operators (3) that belong to a forward/backward phase (2) are those that run in the same time window.
 
 ### TODO
 
@@ -88,3 +88,4 @@ The first step is to get a correlation between cuda launches (1) and kernels (4)
   - https://docs.nvidia.com/cuda/profiler-users-guide/index.html#focusing-profiling
 * Try the tool with a model running with more than one mpi rank. In theory, this should work file, because each process will generate an independent .prof file.
 * This is assuming execution with Sequential Executor. What happens when using the Parallel executor?
+* Will this work well with multi-stream execution?
