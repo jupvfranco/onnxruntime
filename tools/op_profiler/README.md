@@ -87,4 +87,4 @@ The first step is to get a correlation between cuda launches (1) and kernels (4)
 * Can we use focused profiling? 
   - https://docs.nvidia.com/cuda/profiler-users-guide/index.html#focusing-profiling
 * Try the tool with a model running with more than one mpi rank. In theory, this should work file, because each process will generate an independent .prof file.
-* 
+* This is assuming execution with Sequential Executor. What happens when using the Parallel executor?
