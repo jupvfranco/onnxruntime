@@ -73,16 +73,18 @@ Let us take a look at the profiling information for one training step (screensho
 
 We can observe the following information:
 1. cuda launches;
-2. NVTX markers for the executions of forward and backward operators; 
+2. NVTX markers for the executions of forward and backward phases; 
 3. Operators; and
 4. CUDA kernels running on the GPU. 
 
-The first step is to get a correlation between cuda launches and kernels using [this API](https://docs.nvidia.com/cupti/Cupti/annotated.html#structCUpti__ActivityAPI_131ebcf7b922b23850c6c85a9d5157b0d). Then, for each operator, we look at all the cuda launches that happen in the same time window and we consider that the kernels that correlate with these cuda launches are caused by the operator. Finally, the set of operators that belong to a forward/backward phase are those that run in the same time window. 
+The first step is to get a correlation between cuda launches (1) and kernels (4) using [this API](https://docs.nvidia.com/cupti/Cupti/annotated.html#structCUpti__ActivityAPI_131ebcf7b922b23850c6c85a9d5157b0d). Then, for each operator (3), we look at all the cuda launches (1) that happen in the same time window, i.e., all the cuda launches with a starting time greater or equal to the starting time of the operator and with an endind time smaller or equal to the ending time of the operator. We consider the kernels that correlate with these cuda launches are caused by the operator. Finally, the set of operators (3) that belong to a forward/backward phase (2) are those that run in the same time window. 
 
 ### TODO
 
-* Testing
-* Add more information about what is going on in the cpu too. 
+* Testing this tool with more models
+* Add more information to the JSON file about what is going on in the cpu too. 
 * Can we specify which training step(s) to profile?
 * Can we use focused profiling? 
   - https://docs.nvidia.com/cuda/profiler-users-guide/index.html#focusing-profiling
+* Try the tool with a model running with more than one mpi rank. In theory, this should work file, because each process will generate an independent .prof file.
+* 
