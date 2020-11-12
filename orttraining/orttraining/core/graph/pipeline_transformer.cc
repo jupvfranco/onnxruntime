@@ -1182,15 +1182,17 @@ common::Status SplitGraphWithMap(Graph& graph,
     attributes[tag.name()] = tag;
     attributes[element_types.name()] = element_types;
 
+
+    std::string description = is_backward(current_rank, next_rank) ? "Backward pass" : "";
     // Add pair of Send?receive nodes.
     auto& send_node = graph.AddNode(graph.GenerateNodeName("Send"),
-                                    "Send", "", send_input_args,
+                                    "Send", description, send_input_args,
                                     send_output_args, /* output */
                                     &attributes,      /* attribute */
                                     kMSDomain);
 
     auto& recv_node = graph.AddNode(graph.GenerateNodeName("Recv"),
-                                    "Recv", "", recv_input_args,
+                                    "Recv", description, recv_input_args,
                                     recv_output_args, /* output */
                                     &attributes,      /* attribute */
                                     kMSDomain);

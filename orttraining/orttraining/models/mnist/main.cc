@@ -82,6 +82,7 @@ Status ParseArguments(int argc, char* argv[], TrainingRunner::Parameters& params
       ("evaluation_period", "How many training steps to make before making an evaluation.",
         cxxopts::value<size_t>()->default_value("1"))
       ("mapping_file", "Text file with assignment of ops to devices", cxxopts::value<std::string>()->default_value(""))
+      ("partition_after_ad", "Partition the graph after AD.", cxxopts::value<bool>()->default_value("false"))
       ;
   // clang-format on
 
@@ -126,6 +127,7 @@ Status ParseArguments(int argc, char* argv[], TrainingRunner::Parameters& params
       
       const std::string filename = flags["mapping_file"].as<std::string>();
       ReadOpToRankMap(filename, params.op_id_to_rank);
+      params.partition_after_ad = flags["partition_after_ad"].as<bool>();
 
       auto cut_info_groups = flags["cut_group_info"].as<std::vector<std::string>>();
 
@@ -303,5 +305,5 @@ int main(int argc, char* args[]) {
   RETURN_IF_FAIL(runner->Initialize());
   RETURN_IF_FAIL(runner->Run(training_data_loader.get(), test_data_loader.get()));
 
-  RETURN_IF_FAIL(runner->EndTraining(test_data_loader.get()));
+  // RETURN_IF_FAIL(runner->EndTraining(test_data_loader.get()));
 }

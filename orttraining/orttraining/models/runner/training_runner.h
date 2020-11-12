@@ -169,6 +169,8 @@ class TrainingRunner {
     // Alternative for partition: we map operators to rank ids. We identify operators using
     // the name of a tensor produced.
     std::map<std::string, int> op_id_to_rank;
+    // Whether the graph should be partitioned after AD, instead of before AD.
+    bool partition_after_ad = false;
 
     // model_paths[i] is the name of the pipeline stage for i-th process.
     // The i-th file is run by the i-th MPI rank.

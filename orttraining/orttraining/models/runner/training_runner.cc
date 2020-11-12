@@ -123,11 +123,12 @@ Status TrainingRunner::Initialize() {
   }
 
   // configure the loss function if no pipeline is used or it's the last stage of pipeline
-  auto pipeline_stage_id = GetPipelineStageId(MPIContext::GetInstance().GetWorldRank(),
-                                              params_.horizontal_parallel_size,
-                                              params_.data_parallel_size);
-  if (params_.pipeline_parallel_size == 1 ||
-      (pipeline_stage_id + 1) == params_.pipeline_parallel_size) {
+  // auto pipeline_stage_id = GetPipelineStageId(MPIContext::GetInstance().GetWorldRank(),
+  //                                             params_.horizontal_parallel_size,
+  //                                             params_.data_parallel_size);
+  // if (params_.pipeline_parallel_size == 1 ||
+  //     (pipeline_stage_id + 1) == params_.pipeline_parallel_size) 
+  {
     TrainingSession::TrainingConfiguration::LossFunctionConfiguration lf{};
     lf.loss_function_info = params_.loss_func_info;
 
@@ -195,7 +196,11 @@ Status TrainingRunner::Initialize() {
 
   TrainingSession::TrainingConfigurationResult config_result{};
 
-  ORT_RETURN_IF_ERROR(session_.ConfigureForTraining(config, config_result));
+  if (params_.partition_after_ad) {
+    ORT_RETURN_IF_ERROR(session_.ConfigureForTrainingWithLatePartition(config, config_result));
+  } else {
+    ORT_RETURN_IF_ERROR(session_.ConfigureForTraining(config, config_result));
+  }
 
   if (config_result.mixed_precision_config_result.has_value()) {
     const std::string& loss_scale_input_name =

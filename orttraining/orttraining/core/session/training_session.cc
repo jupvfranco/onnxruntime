@@ -139,6 +139,27 @@ void TrainingSession::FilterUnusedWeights(const std::unordered_set<std::string>&
   }
 }
 
+Status GetDeviceAssignmentMap(Graph& graph, 
+                              const std::map<std::string, int>& id_to_rank, 
+                              std::map<Node*, int>& op_to_rank) {
+  for (size_t i = 0, t = graph.MaxNodeIndex(); i < t; ++i) {
+    Node* node = graph.GetNode(i);
+    bool found = false;
+    auto& node_outputs = node->MutableOutputDefs();
+    for (NodeArg* arg : node_outputs) {
+      if (id_to_rank.find(arg->Name()) != id_to_rank.end()) {
+        int rank = id_to_rank.at(arg->Name());
+        op_to_rank.insert({node, rank});
+        found = true;
+        break;
+      }
+    }
+    ORT_ENFORCE(found, "Can't find node's rank " + node->Name());
+  }
+  return Status::OK();
+}
+
+
 const std::string TrainingSession::training_mode_string_ = "training_mode";
 
 Status TrainingSession::ConfigureForTraining(
@@ -175,26 +196,11 @@ Status TrainingSession::ConfigureForTraining(
     // transportation which may alter node_arg and invalidate cut_list info from the original graph.
     ORT_ENFORCE(pipeline_stage_id >= 0, "invalid pipelie stage id (", pipeline_stage_id, ") before doing online partition.");
 
+    std::map<Node*, int> op_to_rank;
+    const auto& id_to_rank = config.pipeline_config.value().op_id_to_rank;
+    ORT_RETURN_IF_ERROR(
+      GetDeviceAssignmentMap(model_->MainGraph(), id_to_rank, op_to_rank));
 
-    std::map<Node*, int> op_to_rank = {};
-    { // TODO: This is temporary. It will be a call to Themis.
-      auto& op_id_to_rank = config.pipeline_config.value().op_id_to_rank;
-      Graph& graph = model_->MainGraph();
-      for (size_t i = 0, t = graph.MaxNodeIndex(); i < t; ++i) {
-        Node* node = graph.GetNode(i);
-        bool found = false;
-        std::vector<NodeArg*>& node_outputs = node->MutableOutputDefs();
-        for (NodeArg* arg : node_outputs) {
-          if (op_id_to_rank.find(arg->Name()) != op_id_to_rank.end()) {
-            int rank = op_id_to_rank.at(arg->Name());
-            op_to_rank.insert({node, rank});
-            found = true;
-            break;
-          }
-        }
-        ORT_ENFORCE(found, "Can't find node's rank " + node->Name());
-      }
-    }
     int n_stages = config.distributed_config.pipeline_parallel_size;
     ORT_RETURN_IF_ERROR(
       ApplyPipelinePartitionToMainGraph(model_->MainGraph(), op_to_rank, false,
@@ -356,6 +362,280 @@ Status TrainingSession::ConfigureForTraining(
     ORT_RETURN_IF_ERROR(SetupOptimizerParams(
         weights_to_train_, fp32_weight_name_to_mixed_precision_node_arg,
         loss_scale_input_name, config, opt_graph_config, opt_node_configs, config_result.weight_name_map_after_graph_transform));
+    TrainingConfigurationResult::OptimizerConfigurationResult optimizer_config_result{};
+    ORT_RETURN_IF_ERROR(BuildOptimizer(
+        opt_graph_config, opt_node_configs,
+        optimizer_config_result.output_key_to_graph_output_name));
+
+    config_result.opt_config_result = optimizer_config_result;
+  } else {
+    if (config.gradient_accumulation_steps > 1) {
+      ORT_RETURN_IF_ERROR(BuildAccumulationNode(weights_to_train_));
+    }
+  }
+
+  // Set eval feed names for nodes that differ between training and inferencing.
+  ORT_RETURN_IF_ERROR(SetEvalFeedNames());
+
+  // add Tensorboard
+  if (config.tensorboard_config.has_value()) {
+    const auto& tensorboard_config = config.tensorboard_config.value();
+
+    std::vector<std::string> tensorboard_scalar_names(tensorboard_config.scalar_node_names);
+
+    if (loss_scale_input_name.has_value()) {
+      tensorboard_scalar_names.emplace_back(loss_scale_input_name.value());
+    }
+
+    // add some tensors from optimizer graph outputs
+    if (config_result.opt_config_result.has_value()) {
+      const auto& opt_output_key_to_graph_output_name =
+          config_result.opt_config_result.value().output_key_to_graph_output_name;
+
+      auto add_opt_graph_output_by_key =
+          [&tensorboard_scalar_names, &opt_output_key_to_graph_output_name](OptimizerOutputKey key) {
+            const auto it = opt_output_key_to_graph_output_name.find(key);
+            if (it != opt_output_key_to_graph_output_name.end()) {
+              tensorboard_scalar_names.emplace_back(it->second);
+            }
+          };
+
+      add_opt_graph_output_by_key(OptimizerOutputKey::GradientAllIsFinite);
+      add_opt_graph_output_by_key(OptimizerOutputKey::GlobalGradientNorm);
+    }
+
+    ORT_RETURN_IF_ERROR(AddTensorboard(
+        tensorboard_config.summary_name, tensorboard_scalar_names,
+        tensorboard_config.histogram_node_names, tensorboard_config.norm_node_names,
+        tensorboard_config.dump_convergence_metrics));
+  }
+
+  // add GIST encoding
+  if (config.gist_config.has_value()) {
+    ORT_RETURN_IF_ERROR(AddGistEncoding());
+  }
+
+  // If the current node is in rank0 or if the current session is running pipeline (in which case different rank would
+  // store different model partition), and if model_with_training_graph_path is specified, save the model.
+  // Note: in the pipeline case, different ranks may resident in the same node. This could lead to a potential write
+  // conflict. It is user's responsibility to make sure different rank is passed in with different. Also, to avoid
+  // writing conflict, only the ranks in first pipeline group write the partition file out.
+  // model_with_training_graph_path value.
+  if ((IsRootNode(config) || (config.pipeline_config.has_value() &&
+                              DistributedRunContext::GroupId(WorkerGroupType::ModelParallel) == 0)) &&
+      config.model_with_training_graph_path.has_value()) {
+    ORT_IGNORE_RETURN_VALUE(Save(
+        config.model_with_training_graph_path.value(), SaveOption::NO_RELOAD));
+  }
+
+  // After pipeline partition, we need to return the inputs allowed in this partition.
+  if (config.pipeline_config.has_value()) {
+    const auto& allowed_inputs = model_->MainGraph().GetInputsIncludingInitializers();
+    const auto& allowed_outputs = model_->MainGraph().GetInputsIncludingInitializers();
+    for (size_t i = 0; i < allowed_inputs.size(); ++i) {
+      const auto name = allowed_inputs[i]->Name();
+      config_result.pipeline_config_result.value().feed_names.push_back(name);
+    }
+    for (size_t i = 0; i < allowed_outputs.size(); ++i) {
+      const auto name = allowed_outputs[i]->Name();
+      config_result.pipeline_config_result.value().fetch_names.push_back(name);
+    }
+  }
+
+  config_result_out = std::move(config_result);
+  is_configured_ = true;
+
+  return Status::OK();
+}
+
+Status TrainingSession::ConfigureForTrainingWithLatePartition(
+    const TrainingConfiguration& config, TrainingConfigurationResult& config_result_out) {
+  ORT_RETURN_IF(
+    IsInitialized(),
+    "TrainingSession::ConfigureForTraining() must be called before TrainingSession::Initialize().");
+
+  if (is_configured_) return Status::OK();
+
+  std::unordered_set<std::string> filtered_config_weight_names_to_train;
+  FilterUnusedWeights(config.weight_names_to_train, filtered_config_weight_names_to_train);
+
+  TrainingConfigurationResult config_result{};
+
+  ORT_ENFORCE(config.distributed_config.pipeline_parallel_size > 0,
+              "This parameter should be 1 if there is no pipeline parallelism. "
+              "Otherwise, it's the number of pipeline stages.");
+
+  DistributedRunContext::CreateInstance({config.distributed_config.world_rank,
+                                         config.distributed_config.world_size,
+                                         config.distributed_config.local_rank,
+                                         config.distributed_config.local_size,
+                                         config.distributed_config.data_parallel_size,
+                                         config.distributed_config.horizontal_parallel_size,
+                                         config.distributed_config.pipeline_parallel_size});
+
+  const int32_t pipeline_stage_id = config.pipeline_config.has_value() ?
+                              DistributedRunContext::RankInGroup(WorkerGroupType::ModelParallel) :
+                              -1;
+
+  is_mixed_precision_enabled_ = config.mixed_precision_config.has_value();
+
+  std::string loss_name{};
+  // Enable loss scale if mixed precision is enabled AND at pipeline last stage if pipeline is used.
+  // We are currently making the assumption that no data parallelism is used together with model parallelism.
+  // So we can check the last stage by checking the world_rank and world_size. Once DP and MP combination is
+  // enabled, we need to devise another way to check MP stages.
+  bool enable_loss_scale = is_mixed_precision_enabled_ &&
+                           config.mixed_precision_config.value().mixed_precision_type == MixedPrecisionDataType::FP16;
+  optional<std::string> loss_scale_input_name =
+      enable_loss_scale ? optional<std::string>{""} : optional<std::string>{};
+
+  const optional<LossFunctionInfo> loss_function_info =
+      config.loss_function_config.has_value()
+          ? config.loss_function_config.value().loss_function_info
+          : optional<LossFunctionInfo>{};
+  ORT_RETURN_IF_ERROR(ConfigureLossFunction(
+      config.loss_name, loss_function_info,
+      loss_scale_input_name.has_value() ? &loss_scale_input_name.value() : nullptr, loss_name));
+  
+  ORT_ENFORCE(
+      !loss_scale_input_name.has_value() || !loss_scale_input_name.value().empty(),
+      "loss_scale_input_name should not be set to an empty string.");
+
+  if (enable_loss_scale) {
+    TrainingConfigurationResult::MixedPrecisionConfigurationResult mp_result{};
+    mp_result.loss_scale_input_name = loss_scale_input_name.value();
+    config_result.mixed_precision_config_result = mp_result;
+  }
+
+  // We need to get trainable weights to prevent constant folding from them. This works well if trainable weights are passed from config.
+  // For case we use GetTrainableModelInitializers to get trainable weights such as C++ frontend, it may get more initializers
+  // than trainable weights here as it's before transformers. So the constant folding may miss some nodes we actually can fold.
+  std::unordered_set<std::string> trainable_initializers =
+      !filtered_config_weight_names_to_train.empty()
+          ? filtered_config_weight_names_to_train
+          : GetTrainableModelInitializers(config.immutable_weights, loss_name);
+  if (config.weight_names_to_not_train.size() > 0) {
+    LOGS(*session_logger_, INFO) << "Excluding following weights from trainable list as specified in configuration:";
+    for (const auto& weight_name_to_not_train : config.weight_names_to_not_train) {
+      trainable_initializers.erase(weight_name_to_not_train);
+      LOGS(*session_logger_, INFO) << weight_name_to_not_train;
+    }
+  }
+
+  ORT_RETURN_IF_ERROR(
+    ApplyTransformationsToMainGraph(trainable_initializers, 
+                                    config.graph_transformer_config, 
+                                    config_result));
+
+  if (IsRootNode(config) && config.model_with_loss_function_path.has_value()) {
+    ORT_IGNORE_RETURN_VALUE(Save(
+        config.model_with_loss_function_path.value(), SaveOption::NO_RELOAD));
+  }
+
+  // derive actual set of weights to train
+  std::unordered_set<std::string> weight_names_to_train =
+      !filtered_config_weight_names_to_train.empty()
+          ? filtered_config_weight_names_to_train
+          : GetTrainableModelInitializers(config.immutable_weights, loss_name);
+  for (const auto& weight_name_to_not_train : config.weight_names_to_not_train) {
+    weight_names_to_train.erase(weight_name_to_not_train);
+  }
+
+  {
+    std::ostringstream weight_names_stream{};
+    for (const auto& weight_name : weight_names_to_train) {
+      weight_names_stream << "  " << weight_name << "\n";
+    }
+    LOGS(*session_logger_, INFO) << "Training weights:\n"
+                                 << weight_names_stream.str();
+  }
+
+  // Transform for mixed precision on forward graph.
+  std::unordered_map<std::string, NodeArg*> fp32_weight_name_to_mixed_precision_node_arg{};
+  if (is_mixed_precision_enabled_) {
+    const auto& mixed_precision_config = config.mixed_precision_config.value();
+    ORT_RETURN_IF_ERROR(EnableMixedPrecision(weight_names_to_train,
+                                             mixed_precision_config,
+                                             fp32_weight_name_to_mixed_precision_node_arg));
+  }
+
+  ORT_RETURN_IF_ERROR(BuildGradientGraph(
+      weight_names_to_train, loss_name, config.gradient_graph_config, *session_logger_));
+
+  if (config.pipeline_config.has_value()) {
+    std::map<Node*, int> op_to_rank;
+    const auto& id_to_rank = config.pipeline_config.value().op_id_to_rank;
+    ORT_RETURN_IF_ERROR(
+      GetDeviceAssignmentMap(model_->MainGraph(), id_to_rank, op_to_rank));
+
+    int n_stages = config.distributed_config.pipeline_parallel_size;
+    ApplyPipelinePartitionToMainGraph(model_->MainGraph(), op_to_rank, true,
+                                      pipeline_stage_id, n_stages);
+
+    // TODO: This should be moved to ApplyPylosPipelinePartitionToMainGraph
+    std::unordered_set<std::string> keep;
+    for (auto& name : weight_names_to_train) {
+      auto nodes = model_->MainGraph().GetConsumerNodes(name);
+      if (!nodes.empty()) {
+        keep.insert(name);
+      } 
+    }
+
+    // TODO: why do we keep so many versions of weights to train?
+    weight_names_to_train = keep;
+    weights_to_train_ = keep;
+
+    TrainingConfigurationResult::PipelineConfigurationResult pipeline_result{};
+    
+    ORT_RETURN_IF_ERROR(InsertPipelineOps(weight_names_to_train,
+                                          pipeline_result.pipeline_tensor_names));
+    // Records which which tensors can be fed into the graph.
+    // It may be different than the original graph because of extra event tensors.
+    for (auto& node_arg : model_->MainGraph().GetInputsIncludingInitializers()) {
+      pipeline_result.feed_names.push_back(node_arg->Name());
+    }
+    // The following loop is for not to fetch tensors not in this pipeline stage.
+    for (size_t i = 0; i < config.pipeline_config.value().fetch_names.size(); ++i) {
+      auto name = config.pipeline_config.value().fetch_names[i];
+      const auto* node_arg = model_->MainGraph().GetNodeArg(name);
+      if (!node_arg) {
+        // This pipelie stage doesn't contain this name.
+        // Let's not to fetch it.
+        continue;
+      }
+      pipeline_result.fetch_names.push_back(name);
+    }
+    pipeline_result.pipeline_stage_id =
+        config.distributed_config.world_rank /
+        (config.distributed_config.data_parallel_size * config.distributed_config.horizontal_parallel_size);
+    config_result.pipeline_config_result = pipeline_result;
+  }
+
+  // All non-float tensors are not trainable. Remove those weights.
+  // TODO: this is a temp workaround for removing rank tensor before adding optimizer.
+  // Re-visit after we port logic for model splitting and hence know the rank tensor name.
+  for (auto it = weights_to_train_.begin(); it != weights_to_train_.end();) {
+    const auto* node_arg = model_->MainGraph().GetNodeArg(*it);
+    ORT_RETURN_IF_NOT(node_arg, "Failed to get NodeArg with name ", *it);
+    if (node_arg->TypeAsProto()->tensor_type().elem_type() != ONNX_NAMESPACE::TensorProto_DataType_FLOAT &&
+        node_arg->TypeAsProto()->tensor_type().elem_type() != ONNX_NAMESPACE::TensorProto_DataType_FLOAT16 &&
+        node_arg->TypeAsProto()->tensor_type().elem_type() != ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16) {
+      it = weights_to_train_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  // add optimizer or gradient accumulation
+  if (config.optimizer_config.has_value()) {
+    OptimizerGraphConfig opt_graph_config{};
+    std::unordered_map<std::string, OptimizerNodeConfig> opt_node_configs{};
+    
+    ORT_RETURN_IF_ERROR(SetupOptimizerParams(
+        weights_to_train_, fp32_weight_name_to_mixed_precision_node_arg,
+        loss_scale_input_name, config, opt_graph_config, opt_node_configs, 
+        config_result.weight_name_map_after_graph_transform));
+
     TrainingConfigurationResult::OptimizerConfigurationResult optimizer_config_result{};
     ORT_RETURN_IF_ERROR(BuildOptimizer(
         opt_graph_config, opt_node_configs,

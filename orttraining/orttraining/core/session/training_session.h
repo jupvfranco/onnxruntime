@@ -262,6 +262,9 @@ class TrainingSession : public InferenceSession {
   common::Status ConfigureForTraining(
       const TrainingConfiguration& config, TrainingConfigurationResult& config_result);
 
+  common::Status ConfigureForTrainingWithLatePartition(
+      const TrainingConfiguration& config, TrainingConfigurationResult& config_result);
+
   /**
    * Overrides the graph outputs with the specified output names.
    * @param outputs The new output names.
