@@ -21,6 +21,8 @@
 #include "orttraining/core/graph/pipeline_transformer.h"
 #include "orttraining/core/graph/gradient_builder_base.h"
 
+#include <queue>
+
 //Gist Encoding
 #include "orttraining/core/optimizer/gist_encode_decode.h"
 
@@ -159,6 +161,74 @@ Status GetDeviceAssignmentMap(Graph& graph,
   return Status::OK();
 }
 
+// Takes the cut_list information and finds the device assignment map.
+Status GetDeviceAssignmentMap(Graph& graph,
+                              const std::vector<TrainingSession::TrainingConfiguration::CutInfo>& cuts,
+                              std::map<Node*, int>& op_to_rank) {
+  auto total_nodes = graph.MaxNodeIndex();
+
+  // TODO: Is there a better way of doing this in ORT?
+  auto assign_all_from_consumers = [&](std::set<Node*>& consumers, int stage,
+                                       std::vector<int>& stages) {
+    std::vector<bool> visited(total_nodes, false); 
+    std::queue<Node*> q;
+
+    // Start the visit from all the consumers.
+    for (Node* n : consumers) { q.push(n); }
+    while (!q.empty()) {
+      Node* current = q.front();
+      q.pop();
+      if (visited[current->Index()]) {
+        continue; // This node has been processed.
+      }
+      visited[current->Index()] = true;
+      stages[current->Index()] = stage;
+
+      // Add all outgoing edges to the queue.
+      auto& node_outputs = current->MutableOutputDefs();
+      for (NodeArg* arg : node_outputs) {
+        if (arg == nullptr || !arg->HasTensorOrScalarShape()) 
+          continue;
+        auto cs = graph.GetMutableConsumerNodes(arg->Name());
+        for (Node* c : cs)
+          q.push(c);
+      }
+    }
+  };
+  
+  // Create a vector of stage ids, where graph.GetNode(i) is assigned to stage
+  // stages[i]. Initially, assign all nodes to stage 0.
+  std::vector<int> stages(total_nodes, 0);
+  for (int cut_id = 0, t = cuts.size(); cut_id < t; ++cut_id) {
+    auto& cut = cuts[cut_id];
+    // Find all consumers of this cut. 
+    std::set<Node*> consumers;
+    for (auto& edge : cut) {
+      if (edge.consumer_nodes.has_value()) {
+        auto& consumer_names = edge.consumer_nodes.value();
+        for (auto& consumer_node_id : consumer_names) {
+          consumers.insert(graph.GetMutableProducerNode(consumer_node_id));
+        }
+      } else {
+        auto cs = graph.GetMutableConsumerNodes(edge.node_arg_name);
+        for (auto c : cs) {
+          consumers.insert(c);
+        }
+      }
+    }
+    // Assign all nodes reachable from consumers to stage cut_id + 1.
+    assign_all_from_consumers(consumers, cut_id + 1, stages);
+  }
+
+  for (size_t i = 0, t = graph.MaxNodeIndex(); i < t; ++i) {
+    Node* node = graph.GetNode(i);
+    int stage = stages[i];
+    op_to_rank.insert({node, stage});
+  }
+
+  return Status::OK();
+}
+
 
 const std::string TrainingSession::training_mode_string_ = "training_mode";
 
@@ -197,9 +267,15 @@ Status TrainingSession::ConfigureForTraining(
     ORT_ENFORCE(pipeline_stage_id >= 0, "invalid pipelie stage id (", pipeline_stage_id, ") before doing online partition.");
 
     std::map<Node*, int> op_to_rank;
-    const auto& id_to_rank = config.pipeline_config.value().op_id_to_rank;
-    ORT_RETURN_IF_ERROR(
-      GetDeviceAssignmentMap(model_->MainGraph(), id_to_rank, op_to_rank));
+    const auto& cut_list = config.pipeline_config.value().cut_list;
+    if (cut_list.size() > 0) {
+      ORT_RETURN_IF_ERROR(
+        GetDeviceAssignmentMap(model_->MainGraph(), cut_list, op_to_rank));
+    } else {
+      const auto& id_to_rank = config.pipeline_config.value().op_id_to_rank;
+      ORT_RETURN_IF_ERROR(
+        GetDeviceAssignmentMap(model_->MainGraph(), id_to_rank, op_to_rank));
+    }
 
     int n_stages = config.distributed_config.pipeline_parallel_size;
     ORT_RETURN_IF_ERROR(
